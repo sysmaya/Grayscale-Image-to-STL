@@ -1,0 +1,468 @@
+<html lang="es"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Online Grayscale Image Converter to STL</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+	<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/geedmo/yamm@4.0.0/dist/yamm.min.css">
+</head>
+<body>
+    <!-- Menú Superior https://github.com/geedmo/yamm?tab=readme-ov-file -->
+<style>
+  label{display:block;margin:10px 0 6px;font-weight:600;font-size:13px}
+  input[type=file]{width:100%}
+  input[type=range]{width:100%}
+  button{margin-top:8px;padding:8px 10px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer}
+  #canvas3d{width:100%;height:100%;display:block;border:1px solid gainsboro;}
+  #viewer { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; background: #f0f0f0; } 
+  .input-inline { display: flex; align-items: center; gap: 6px; }
+  .input-inline input[type=range] { flex: 1; }
+  .input-inline .small { white-space: nowrap; font-size: 12px; color: #666; }
+</style>
+<div class="container">
+  <h2>Grayscale Image Converter to 3D STL</h2>
+  <div class="row">
+      <div class="col-md-4">
+          <aside id="controls">
+            <div id="previewContainer" class="mt-2 text-center">
+              <label class="small text-muted">Source image</label>
+              <img id="previewImage" src="angel520.png" style="max-width: 100%; max-height: 200px; border-radius: 8px; box-shadow: 0 0 6px rgba(0,0,0,0.2);">
+            </div>
+            <label>Select image (jpg/png)</label>
+            <input id="file" type="file" accept="image/*">
+            <label>Z scale (maximum height mm)</label>
+            <div class="input-inline">
+              <input id="scaleZ" type="range" min="0" max="50" value="10">
+              <div class="small"><span id="scaleZVal">20</span> mm</div>
+            </div>
+            <div class="row">
+                <div class="col-6">    
+                  <label>Brightness</label>
+                  <input id="brightness" type="range" min="-100" max="100" value="0">
+                </div>
+                <div class="col-6">
+                  <label>Contrast</label>
+                  <input id="contrast" type="range" min="-100" max="100" value="0">
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-6">    
+                  <label>Directional light</label>
+                  <input id="sunIntensity" type="range" min="0" max="4" step="0.1" value="1">
+                </div>
+                <div class="col-6">
+                  <label>Sun angle (azimuth)</label>
+                  <input id="sunAzimuth" type="range" min="0" max="360" value="45">
+                </div>
+            </div>
+            <label>Color of the object</label>
+            <input id="color" type="color" value="#998762">
+          </aside>
+      </div>
+      <div class="col-md-8">
+          <main id="viewer">
+             <canvas id="canvas3d" data-engine="three.js r150" width="720" height="461" style="touch-action: none; width: 720px; height: 461px;"></canvas>
+          </main>
+      </div>
+      <div class="col-12 text-center mt-3">
+        <button id="gen" class="btn btn-primary btn-lg mx-2 shadow-sm">
+          <i class="fas fa-cubes mr-1"></i> Generate 3D
+        </button>
+        <button id="downloadSTL" class="btn btn-success btn-lg mx-2 shadow-sm">
+          <i class="fas fa-download mr-1"></i> Download STL
+        </button>
+        <button id="downloadGray" class="btn btn-secondary btn-lg mx-2 shadow-sm">
+          <i class="fas fa-image mr-1"></i> Download Grayscale
+        </button>
+      </div>
+  </div>
+  <div class="small">Tips:</div>
+  <ul class="small">
+    <li>Images with good tonal variation give better reliefs.</li>
+    <li>Use brightness/contrast to accentuate cuts and shadows.</li>
+    <li>STL export is local — no file uploads required.</li>
+</ul>
+</div>
+  <script type="module">
+    import * as THREE from "https://esm.sh/three@0.150.0";
+    import { OrbitControls } from "https://esm.sh/three@0.150.0/examples/jsm/controls/OrbitControls.js";
+    import { STLExporter } from "https://esm.sh/three@0.150.0/examples/jsm/exporters/STLExporter.js";
+    // UI refs
+    const fileEl = document.getElementById('file');
+    const genBtn = document.getElementById('gen');
+    const downSTL = document.getElementById('downloadSTL');
+    const downGray = document.getElementById('downloadGray');
+    const canvasEl = document.getElementById('canvas3d');
+    const scaleZEl = document.getElementById('scaleZ');
+    const scaleZVal = document.getElementById('scaleZVal');
+    const brightnessEl = document.getElementById('brightness');
+    const contrastEl = document.getElementById('contrast');
+    const sunIntensityEl = document.getElementById('sunIntensity');
+    const sunAzEl = document.getElementById('sunAzimuth');
+    const colorEl = document.getElementById('color');
+    scaleZEl.addEventListener('input', () => scaleZVal.textContent = scaleZEl.value);
+    // Three.js setup
+    const renderer = new THREE.WebGLRenderer({canvas: canvasEl, antialias:true});
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setClearColor(0xFFFFFF, 1);
+    const scene = new THREE.Scene();
+    // camera will be set after we know image size
+    let camera;     
+    // Después de crear `scene`, agrega esto:
+    const aspect = canvasEl.clientWidth / canvasEl.clientHeight;
+    camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000);
+    camera.position.set(0, 50, 100);
+    camera.lookAt(0, 0, 0);
+    // Y luego crea los controles (aunque no haya malla aún)
+    let controls;
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; // opcional
+    //const grid = new THREE.GridHelper(600, 40, 0xcccccc, 0xeeeeee);
+    //grid.rotation.x = Math.PI/2;
+    //scene.add(grid);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambient);
+    const dirLight = new THREE.DirectionalLight(0xffffff, parseFloat(sunIntensityEl.value));
+    dirLight.position.set(50,50,50);
+    scene.add(dirLight);
+    // store mesh and canvas for grayscale
+    let heightMesh = null;
+    let imageCanvas = document.createElement('canvas');
+    function onWindowResize(){
+      const w = canvasEl.clientWidth;
+      const h = canvasEl.clientHeight;
+      renderer.setSize(w,h,true);
+      if(camera){
+        camera.aspect = w/h;
+        camera.updateProjectionMatrix();
+      }
+    }
+    window.addEventListener('resize', onWindowResize);
+    function animate(){
+      requestAnimationFrame(animate);
+      if(controls) controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+    // Image load and processing
+    async function loadImageFile(srcOrFile) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        // Si es una URL (string)
+        if (typeof srcOrFile === 'string') {
+          img.src = srcOrFile;
+        } 
+        // Si es un archivo del input
+        else if (srcOrFile instanceof File) {
+          img.src = URL.createObjectURL(srcOrFile);
+        } 
+        else {
+          reject(new Error('loadImageFile: tipo no soportado'));
+          return;
+        }
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+      });
+    }
+    function applyBrightnessContrast(pixels, brightness=0, contrast=0){
+      // brightness [-100,100], contrast [-100,100]
+      const b = Math.round(255 * (brightness/100));
+      const c = contrast/100;
+      // contrast factor
+      const factor = (1 + c) / (1 - c + 1e-9);
+      for(let i=0;i<pixels.data.length;i+=4){
+        for(let j=0;j<3;j++){
+          let v = pixels.data[i+j];
+          v = v + b;
+          v = (v - 128) * factor + 128;
+          pixels.data[i+j] = Math.max(0, Math.min(255, Math.round(v)));
+        }
+      }
+      return pixels;
+    }
+    function toGrayscale(pixels){
+      for(let i=0;i<pixels.data.length;i+=4){
+        const r = pixels.data[i], g = pixels.data[i+1], b = pixels.data[i+2];
+        // luminance
+        const y = Math.round(0.299*r + 0.587*g + 0.114*b);
+        pixels.data[i] = pixels.data[i+1] = pixels.data[i+2] = y;
+      }
+      return pixels;
+    }
+    // Variables globales para reutilizar
+    let originalGrayscaleData = null; // ImageData sin brillo/contraste
+    let currentImageWidth = 0;
+    let currentImageHeight = 0;
+    let originalImage = null; // opcional, pero útil
+    genBtn.addEventListener('click', async () => {
+      if (!fileEl.files || !fileEl.files[0]) {
+        alert('Selecciona una imagen primero');
+        return;
+      }
+      const img = await loadImageFile(fileEl.files[0]);
+      originalImage = img;
+      // Mostrar vista previa de la imagen cargada
+      const previewEl = document.getElementById('previewImage');
+      if (previewEl) {
+        previewEl.src = img.src;
+      }
+      // remove old mesh
+      if (heightMesh) {
+        scene.remove(heightMesh);
+        heightMesh.geometry.dispose();
+        heightMesh.material.dispose();
+        heightMesh = null;
+      }
+      // resize image if too big for performance
+      const maxDim = 512;
+      let w = img.width, h = img.height;
+      let scale = 1;
+      if (Math.max(w, h) > maxDim) {
+        scale = maxDim / Math.max(w, h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+      currentImageWidth = w;
+      currentImageHeight = h;
+      imageCanvas.width = w;
+      imageCanvas.height = h;
+      const ctx = imageCanvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      // Get base grayscale (sin brillo/contraste)
+      let id = ctx.getImageData(0, 0, w, h);
+      id = toGrayscale(id);
+      originalGrayscaleData = id; // ✅ Guardamos el grayscale base
+      // Aplicar ajustes iniciales y generar mesh
+      const adjustedData = applyBrightnessContrast(
+        new ImageData(new Uint8ClampedArray(id.data), w, h),
+        parseInt(brightnessEl.value, 10),
+        parseInt(contrastEl.value, 10)
+      );
+      // Crear geometría y mesh
+      const geometry = new THREE.PlaneGeometry(w, h, w - 1, h - 1);
+      geometry.rotateX(-Math.PI / 2);
+      const positions = geometry.attributes.position.array;
+      const maxZ = parseFloat(scaleZEl.value);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const pxIndex = (y * w + x) * 4;
+          const lum = adjustedData.data[pxIndex];
+          const height = (lum / 255) * maxZ;
+          const vertIndex = (y * w + x) * 3;
+          positions[vertIndex + 1] = height;
+        }
+      }
+      geometry.computeVertexNormals();
+      const mat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(colorEl.value),
+        metalness: 0.2,
+        roughness: 0.6
+      });
+      const mesh = new THREE.Mesh(geometry, mat);
+      mesh.receiveShadow = true;
+      mesh.castShadow = true;
+      heightMesh = mesh;
+      scene.add(mesh);
+      // Ajustar cámara y grid
+      const bounding = new THREE.Box3().setFromObject(mesh);
+      const size = new THREE.Vector3();
+      bounding.getSize(size);
+      const center = new THREE.Vector3();
+      bounding.getCenter(center);
+      const aspect = canvasEl.clientWidth / canvasEl.clientHeight;
+      camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 10000);
+      camera.position.set(center.x + size.x * 1.2, center.y + Math.max(size.y, size.z) * 1.5, center.z + size.z * 1.2);
+      camera.lookAt(center);
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.copy(center);
+      controls.update();
+      //grid.position.set(center.x, center.y - 0.01, center.z);
+      onWindowResize();
+      // ✅ Actualizar la imagen para descarga
+      ctx.putImageData(adjustedData, 0, 0);
+    });
+    function updateHeightMesh() {
+      if (!heightMesh || !originalGrayscaleData) return;
+      // Aplicar brillo/contraste al grayscale base
+      const w = currentImageWidth;
+      const h = currentImageHeight;
+      const adjustedData = applyBrightnessContrast(
+        new ImageData(new Uint8ClampedArray(originalGrayscaleData.data), w, h),
+        parseInt(brightnessEl.value, 10),
+        parseInt(contrastEl.value, 10)
+      );
+      // Actualizar la imagen para descarga
+      const ctx = imageCanvas.getContext('2d');
+      ctx.putImageData(adjustedData, 0, 0);
+      // Actualizar geometría
+      const geometry = heightMesh.geometry;
+      const positions = geometry.attributes.position.array;
+      const maxZ = parseFloat(scaleZEl.value);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const pxIndex = (y * w + x) * 4;
+          const lum = adjustedData.data[pxIndex];
+          const height = (lum / 255) * maxZ;
+          const vertIndex = (y * w + x) * 3;
+          positions[vertIndex + 1] = height;
+        }
+      }
+      // Notificar a Three.js que los vértices cambiaron
+      geometry.attributes.position.needsUpdate = true;
+      geometry.computeVertexNormals(); // para que las sombras se actualicen bien
+    }
+    // Download grayscale image (current adjustments)
+    downGray.addEventListener('click', ()=>{
+      if(!imageCanvas || !imageCanvas.width){ alert('No hay imagen procesada'); return; }
+      imageCanvas.toBlob(blob => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'grayscale.png';
+        a.click();
+      }, 'image/png');
+    });
+    // Download STL
+    downSTL.addEventListener('click', ()=>{
+      if(!heightMesh){ alert('Genera el modelo 3D primero'); return; }
+      const exporter = new STLExporter();
+      const stlString = exporter.parse(heightMesh);
+      const blob = new Blob([stlString], {type: 'text/plain'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'heightmap.stl';
+      a.click();
+    });
+    // update light and color live
+    sunIntensityEl.addEventListener('input', ()=>{ dirLight.intensity = parseFloat(sunIntensityEl.value); });
+    sunAzEl.addEventListener('input', ()=>{
+      const deg = parseFloat(sunAzEl.value) * Math.PI/180;
+      const r = 100;
+      dirLight.position.set(Math.cos(deg)*r, 80, Math.sin(deg)*r);
+    });
+    colorEl.addEventListener('input', ()=>{ if(heightMesh) heightMesh.material.color.set(colorEl.value); });
+    // if user changes brightness/contrast update preview image on canvas but don't regenerate mesh until user clicks
+    fileEl.addEventListener('change', ()=>{
+      // just load and show processed grayscale in offscreen canvas ready for download
+      if(!fileEl.files || !fileEl.files[0]) return;
+      if (fileEl.files[0]) {
+        const previewEl = document.getElementById('previewImage');
+        previewEl.src = URL.createObjectURL(fileEl.files[0]);
+      }
+      loadImageFile(fileEl.files[0]).then(img=>{
+        const maxDim = 512;
+        let w = img.width, h = img.height;
+        let scale = 1;
+        if(Math.max(w,h) > maxDim){ scale = maxDim / Math.max(w,h); w = Math.round(w*scale); h = Math.round(h*scale); }
+        imageCanvas.width = w; imageCanvas.height = h;
+        const ctx = imageCanvas.getContext('2d');
+        ctx.drawImage(img,0,0,w,h);
+        let id = ctx.getImageData(0,0,w,h);
+        id = applyBrightnessContrast(id, parseInt(brightnessEl.value,10), parseInt(contrastEl.value,10));
+        id = toGrayscale(id);
+        ctx.putImageData(id,0,0);
+      });
+    });
+    // Escuchar cambios en Escala Z, Brillo y Contraste para actualizar el mesh
+    [scaleZEl, brightnessEl, contrastEl].forEach(el => {
+      el.addEventListener('input', () => {
+        if (heightMesh) {
+          // Actualizar valor mostrado de Escala Z
+          if (el === scaleZEl) {
+            scaleZVal.textContent = scaleZEl.value;
+          }
+          updateHeightMesh();
+        }
+      });
+    });
+    async function initExampleModel() {
+      const exampleURL = 'angel520.png'; // 🔹 ruta en tu servidor
+      const img = await loadImageFile(exampleURL);
+      originalImage = img;
+      // eliminar mesh previo
+      if (heightMesh) {
+        scene.remove(heightMesh);
+        heightMesh.geometry.dispose();
+        heightMesh.material.dispose();
+        heightMesh = null;
+      }
+      // redimensionar imagen si es grande
+      const maxDim = 512;
+      let w = img.width, h = img.height;
+      let scale = 1;
+      if (Math.max(w, h) > maxDim) {
+        scale = maxDim / Math.max(w, h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+      currentImageWidth = w;
+      currentImageHeight = h;
+      imageCanvas.width = w;
+      imageCanvas.height = h;
+      const ctx = imageCanvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      // obtener escala de grises base
+      let id = ctx.getImageData(0, 0, w, h);
+      id = toGrayscale(id);
+      originalGrayscaleData = id;
+      // aplicar brillo y contraste iniciales
+      const adjustedData = applyBrightnessContrast(
+        new ImageData(new Uint8ClampedArray(id.data), w, h),
+        parseInt(brightnessEl.value, 10),
+        parseInt(contrastEl.value, 10)
+      );
+      // crear geometría y mesh
+      const geometry = new THREE.PlaneGeometry(w, h, w - 1, h - 1);
+      geometry.rotateX(-Math.PI / 2);
+      const positions = geometry.attributes.position.array;
+      const maxZ = parseFloat(scaleZEl.value);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const pxIndex = (y * w + x) * 4;
+          const lum = adjustedData.data[pxIndex];
+          const height = (lum / 255) * maxZ;
+          const vertIndex = (y * w + x) * 3;
+          positions[vertIndex + 1] = height;
+        }
+      }
+      geometry.computeVertexNormals();
+      const mat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(colorEl.value),
+        metalness: 0.2,
+        roughness: 0.6
+      });
+      const mesh = new THREE.Mesh(geometry, mat);
+      mesh.receiveShadow = true;
+      mesh.castShadow = true;
+      heightMesh = mesh;
+      scene.add(mesh);
+      // ajustar cámara
+      const bounding = new THREE.Box3().setFromObject(mesh);
+      const size = new THREE.Vector3();
+      bounding.getSize(size);
+      const center = new THREE.Vector3();
+      bounding.getCenter(center);
+      const aspect = canvasEl.clientWidth / canvasEl.clientHeight;
+      camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 10000);
+      camera.position.set(center.x + size.x * 1.2, center.y + Math.max(size.y, size.z) * 1.5, center.z + size.z * 1.2);
+      camera.lookAt(center);
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.copy(center);
+      controls.update();
+      onWindowResize();
+      // mostrar la imagen procesada en el canvas
+      ctx.putImageData(adjustedData, 0, 0);
+    }
+    window.addEventListener('DOMContentLoaded', () => {
+      initExampleModel();
+    });
+  </script><div class="container py-4 mt-5"></div>
+    <footer class="bg-dark text-white text-center py-3 mt-4">
+		<p class="mb-0">© 2025 online-tools.muisca.co</p>
+	</footer>
+	<!-- Bootstrap JS y dependencias -->
+    <script src="https://code.jquery.com/jquery-3.4.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js"></script>
+</body>
+</html>
