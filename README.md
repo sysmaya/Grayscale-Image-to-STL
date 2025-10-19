@@ -1,4 +1,4 @@
-# 🏔️ Heightmap Grayscale → STL Generator
+# 🏔️ Image Heightmap Grayscale → STL Generator
 
 Convert any grayscale image into a **3D STL model** directly in your browser.  
 This tool runs **100% client-side** using [Three.js](https://threejs.org) — no server uploads, no registration, and no data tracking.  
