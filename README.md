@@ -16,7 +16,7 @@ It’s ideal for creating reliefs and heightmaps for **CNC milling**, **3D print
 
 ---
 
-## ✨ Features
+## ✨ Features - Heightmap to STL Converter
 
 - 🖼️ Load **JPG** or **PNG** images directly from your computer  
 - 🎚️ Adjust **height scale**, **brightness**, and **contrast** before generating  
